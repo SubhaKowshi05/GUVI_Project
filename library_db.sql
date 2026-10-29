@@ -1,22 +1,5 @@
--- =====================================================================
--- Library Management Database (PostgreSQL 12+)
--- Books, users, and issue/return transactions.
---
--- Run:  psql -d <your_db> -f library_db.sql
---
--- RELATIONSHIPS
---   categories 1 ──< books >──< book_authors >── authors     (book <-> author is many-to-many)
---   books      1 ──< book_copies                             (one title, many physical copies)
---   users      1 ──< transactions >── 1 book_copies          (a transaction = one copy issued to one user)
---   transactions 1 ──0..1 fines                              (a late return produces at most one fine)
--- =====================================================================
-
 DROP TABLE IF EXISTS fines, transactions, book_copies, book_authors,
                      books, authors, categories, users CASCADE;
-
--- ---------------------------------------------------------------------
--- 1. SCHEMA
--- ---------------------------------------------------------------------
 
 CREATE TABLE categories (
     category_id  SERIAL       PRIMARY KEY,
@@ -28,7 +11,7 @@ CREATE TABLE authors (
     full_name    VARCHAR(100) NOT NULL
 );
 
-CREATE TABLE books (               -- the "title" (catalogue entry)
+CREATE TABLE books (               
     book_id       SERIAL       PRIMARY KEY,
     isbn          VARCHAR(17)  NOT NULL UNIQUE,
     title         VARCHAR(200) NOT NULL,
@@ -37,13 +20,13 @@ CREATE TABLE books (               -- the "title" (catalogue entry)
     category_id   INT          REFERENCES categories(category_id) ON DELETE SET NULL
 );
 
-CREATE TABLE book_authors (        -- resolves the many-to-many between books and authors
+CREATE TABLE book_authors (       
     book_id    INT NOT NULL REFERENCES books(book_id)    ON DELETE CASCADE,
     author_id  INT NOT NULL REFERENCES authors(author_id) ON DELETE CASCADE,
     PRIMARY KEY (book_id, author_id)
 );
 
-CREATE TABLE book_copies (         -- the physical copies that actually get issued
+CREATE TABLE book_copies (        
     copy_id   SERIAL      PRIMARY KEY,
     book_id   INT         NOT NULL REFERENCES books(book_id) ON DELETE CASCADE,
     barcode   VARCHAR(30) NOT NULL UNIQUE,
@@ -64,7 +47,7 @@ CREATE TABLE users (
     joined_on  DATE         NOT NULL DEFAULT CURRENT_DATE
 );
 
-CREATE TABLE transactions (        -- one row per issue; return_date IS NULL means "still out"
+CREATE TABLE transactions (        
     txn_id       SERIAL  PRIMARY KEY,
     copy_id      INT     NOT NULL REFERENCES book_copies(copy_id),
     user_id      INT     NOT NULL REFERENCES users(user_id),
@@ -75,7 +58,6 @@ CREATE TABLE transactions (        -- one row per issue; return_date IS NULL mea
     CONSTRAINT chk_return_after_issue CHECK (return_date IS NULL OR return_date >= issue_date)
 );
 
--- Database-level guarantee: a copy can have at most ONE open (unreturned) transaction.
 CREATE UNIQUE INDEX uq_one_open_loan_per_copy
     ON transactions (copy_id) WHERE return_date IS NULL;
 
@@ -92,11 +74,6 @@ CREATE TABLE fines (
     CONSTRAINT chk_paid_date CHECK ((paid AND paid_on IS NOT NULL) OR (NOT paid AND paid_on IS NULL))
 );
 
--- ---------------------------------------------------------------------
--- 2. ISSUE / RETURN LOGIC (functions run atomically inside one transaction)
--- ---------------------------------------------------------------------
-
--- Issue a copy to a user. Returns the new txn_id, or raises an error explaining why not.
 CREATE OR REPLACE FUNCTION issue_book(
     p_user_id INT,
     p_copy_id INT,
@@ -117,7 +94,6 @@ BEGIN
         RAISE EXCEPTION 'User % is suspended', p_user_id;
     END IF;
 
-    -- Lock the copy row so two librarians cannot issue the same copy at once.
     SELECT status INTO v_status FROM book_copies WHERE copy_id = p_copy_id FOR UPDATE;
     IF NOT FOUND THEN
         RAISE EXCEPTION 'Copy % does not exist', p_copy_id;
@@ -148,8 +124,6 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- Return a copy. Closes the open transaction, frees the copy, and records a fine if late.
--- Returns the fine amount (0 if on time).
 CREATE OR REPLACE FUNCTION return_book(
     p_copy_id      INT,
     p_return_date  DATE    DEFAULT CURRENT_DATE,
@@ -175,10 +149,6 @@ BEGIN
     RETURN v_fine;
 END;
 $$ LANGUAGE plpgsql;
-
--- ---------------------------------------------------------------------
--- 3. SAMPLE DATA
--- ---------------------------------------------------------------------
 
 INSERT INTO categories (name) VALUES ('Computer Science'), ('Fiction'), ('Science');
 
@@ -208,27 +178,12 @@ INSERT INTO users (full_name, email, phone, role, max_books) VALUES
   ('Dr. Meena Iyer', 'meena@example.com', '9000000003', 'FACULTY', 5),
   ('Suresh Babu', 'suresh@example.com','9000000004', 'STAFF', 2);
 
--- ---------------------------------------------------------------------
--- 4. USING THE ISSUE / RETURN FUNCTIONS
--- ---------------------------------------------------------------------
-
--- Issue copy 1 (EJ-001) to user 1 for the default 14 days:
 SELECT issue_book(1, 1);
 
--- Issue copy 4 (CC-001) to user 2 for 7 days:
 SELECT issue_book(2, 4, 7);
 
--- Return copy 1 on time (returns 0 = no fine):
 SELECT return_book(1);
 
--- Return a copy late by passing the actual return date (fine = days late x 2.00):
---   SELECT return_book(4, CURRENT_DATE + 10);
-
--- ---------------------------------------------------------------------
--- 5. TRACKING QUERIES
--- ---------------------------------------------------------------------
-
--- Q1. Catalogue with authors and how many copies are available right now
 SELECT b.book_id, b.title,
        STRING_AGG(DISTINCT a.full_name, ', ') AS authors,
        c.name AS category,
@@ -242,12 +197,10 @@ LEFT JOIN book_copies  bc ON bc.book_id = b.book_id
 GROUP BY b.book_id, b.title, c.name
 ORDER BY b.title;
 
--- Q2. Which copies are available for a given title (to pick one to issue)
 SELECT bc.copy_id, bc.barcode
 FROM book_copies bc JOIN books b ON b.book_id = bc.book_id
 WHERE b.title = 'Clean Code' AND bc.status = 'AVAILABLE';
 
--- Q3. Currently issued books: who has what, and when it is due
 SELECT t.txn_id, u.full_name AS borrower, b.title, bc.barcode,
        t.issue_date, t.due_date,
        (t.due_date - CURRENT_DATE) AS days_left
@@ -258,7 +211,6 @@ JOIN books b        ON b.book_id  = bc.book_id
 WHERE t.return_date IS NULL
 ORDER BY t.due_date;
 
--- Q4. Overdue books with days overdue and the fine accrued so far (2.00 per day)
 SELECT u.full_name AS borrower, u.email, b.title, t.due_date,
        (CURRENT_DATE - t.due_date)        AS days_overdue,
        (CURRENT_DATE - t.due_date) * 2.00 AS fine_so_far
@@ -269,7 +221,6 @@ JOIN books b        ON b.book_id  = bc.book_id
 WHERE t.return_date IS NULL AND t.due_date < CURRENT_DATE
 ORDER BY days_overdue DESC;
 
--- Q5. Full borrowing history of one user
 SELECT b.title, t.issue_date, t.due_date, t.return_date,
        CASE WHEN t.return_date IS NULL THEN 'ISSUED'
             WHEN t.return_date > t.due_date THEN 'RETURNED LATE'
@@ -280,7 +231,6 @@ JOIN books b        ON b.book_id  = bc.book_id
 WHERE t.user_id = 1
 ORDER BY t.issue_date DESC;
 
--- Q6. Each user's current load against their limit
 SELECT u.user_id, u.full_name, u.max_books,
        COUNT(t.txn_id) AS currently_borrowed,
        u.max_books - COUNT(t.txn_id) AS can_still_borrow
@@ -289,7 +239,6 @@ LEFT JOIN transactions t ON t.user_id = u.user_id AND t.return_date IS NULL
 GROUP BY u.user_id, u.full_name, u.max_books
 ORDER BY u.full_name;
 
--- Q7. Most borrowed titles
 SELECT b.title, COUNT(*) AS times_borrowed
 FROM transactions t
 JOIN book_copies bc ON bc.copy_id = t.copy_id
@@ -297,7 +246,6 @@ JOIN books b        ON b.book_id  = bc.book_id
 GROUP BY b.title
 ORDER BY times_borrowed DESC, b.title;
 
--- Q8. Unpaid fines per user
 SELECT u.full_name, SUM(f.amount) AS unpaid_total
 FROM fines f
 JOIN transactions t ON t.txn_id = f.txn_id
@@ -306,10 +254,8 @@ WHERE NOT f.paid
 GROUP BY u.full_name
 ORDER BY unpaid_total DESC;
 
--- Q9. Mark a fine as paid
 UPDATE fines SET paid = TRUE, paid_on = CURRENT_DATE WHERE fine_id = 1 AND NOT paid;
 
--- Q10. Books by a given author
 SELECT b.title, b.publish_year
 FROM books b
 JOIN book_authors ba ON ba.book_id = b.book_id
