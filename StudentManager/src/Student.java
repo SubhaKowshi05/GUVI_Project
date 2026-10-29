@@ -1,7 +1,4 @@
-/**
- * Domain model for a single student record.
- * Encapsulation: fields are private and validated in the setters.
- */
+
 public class Student implements Comparable<Student> {
     private final int id;
     private String name;
@@ -65,7 +62,6 @@ public class Student implements Comparable<Student> {
         return id + "," + name + "," + age + "," + course + "," + gpa;
     }
 
-    /** Rebuilds a student from a CSV line produced by {@link #toCsv()}. */
     public static Student fromCsv(String line) {
         String[] p = line.split(",", -1);
         if (p.length != 5) {
