@@ -4,10 +4,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
 
-/**
- * In-memory store of students, backed by a TreeMap so records stay sorted by ID.
- * Contains the business rules; knows nothing about the console or files.
- */
 public class StudentRepository {
     private final Map<Integer, Student> students = new TreeMap<>();
 
@@ -32,7 +28,6 @@ public class StudentRepository {
         }
     }
 
-    /** Case-insensitive partial match on the student's name. */
     public List<Student> searchByName(String query) {
         String q = query.trim().toLowerCase();
         List<Student> result = new ArrayList<>();
@@ -44,12 +39,10 @@ public class StudentRepository {
         return result;
     }
 
-    /** All students, sorted by ID (the natural order). */
     public List<Student> getAll() {
         return new ArrayList<>(students.values());
     }
 
-    /** All students, sorted by the supplied comparator. */
     public List<Student> getAllSorted(Comparator<Student> comparator) {
         List<Student> list = getAll();
         list.sort(comparator);
