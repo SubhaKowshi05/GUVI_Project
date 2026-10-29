@@ -3,7 +3,6 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Scanner;
 
-/** Console UI: menu loop, input handling, and wiring of repository + storage. */
 public class Main {
     private static final String DATA_FILE = "students.csv";
 
@@ -52,8 +51,6 @@ public class Main {
         System.out.println("7. View sorted (name / GPA)");
         System.out.println("0. Exit");
     }
-
-    // ---- actions ----
 
     private void addStudent() {
         try {
@@ -135,7 +132,6 @@ public class Main {
         printTable(repo.getAllSorted(cmp));
     }
 
-    // ---- helpers ----
 
     private void printTable(List<Student> list) {
         if (list.isEmpty()) {
